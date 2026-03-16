@@ -3,6 +3,7 @@ package installer
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"helm.sh/helm/v3/pkg/action"
@@ -160,15 +161,38 @@ func Uninstall(kubeconfig, namespace string) error {
 // addRepo adds a Helm chart repository
 func addRepo(name, url string, env *cli.EnvSettings) error {
 	repoFile := env.RepositoryConfig
-	r := repo.Entry{Name: name, URL: url}
-	chartRepo, err := repo.NewChartRepository(&r, getter.All(env))
+
+	// Ensure the directory exists
+	if err := os.MkdirAll(filepath.Dir(repoFile), 0755); err != nil {
+		return fmt.Errorf("failed to create repo directory: %w", err)
+	}
+
+	// Load existing repo file or create new one
+	f, err := repo.LoadFile(repoFile)
 	if err != nil {
-		return err
+		f = repo.NewFile()
 	}
+
+	// Skip if already exists
+	if f.Has(name) {
+		return nil
+	}
+
+	entry := &repo.Entry{Name: name, URL: url}
+	chartRepo, err := repo.NewChartRepository(entry, getter.All(env))
+	if err != nil {
+		return fmt.Errorf("failed to create chart repo: %w", err)
+	}
+
 	if _, err := chartRepo.DownloadIndexFile(); err != nil {
-		return err
+		return fmt.Errorf("failed to download index for %s: %w", name, err)
 	}
-	_ = repoFile
+
+	f.Update(entry)
+	if err := f.WriteFile(repoFile, 0644); err != nil {
+		return fmt.Errorf("failed to write repo file: %w", err)
+	}
+
 	return nil
 }
 
